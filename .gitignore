@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+energy.db
+*.sqlite3
+.env
+project_structure.txt

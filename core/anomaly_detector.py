@@ -1,14 +1,11 @@
-class AnomalyDetector:
+"""
+core/anomaly_detector.py
+Simple threshold-based anomaly detection for power readings.
+"""
 
-    def __init__(self, voltage_threshold=250, current_threshold=5):
-        self.voltage_threshold = voltage_threshold
-        self.current_threshold = current_threshold
+POWER_THRESHOLD_W = 1200
 
-    def detect(self, voltage, current, power):
-        if voltage > self.voltage_threshold:
-            return True
-        if current > self.current_threshold:
-            return True
-        if power > 650:
-            return True
-        return False
+
+def is_anomaly(power_w: float) -> bool:
+    """Returns True if the predicted power exceeds the threshold (1200W)."""
+    return power_w > POWER_THRESHOLD_W

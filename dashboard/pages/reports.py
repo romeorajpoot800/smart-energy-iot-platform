@@ -1,0 +1,289 @@
+"""
+Reports Page
+Export energy data in various formats
+"""
+
+import streamlit as st
+import pandas as pd
+import requests
+import io
+from datetime import datetime
+import numpy as np
+
+# Try to import FPDF for PDF generation
+try:
+    from fpdf import FPDF
+    FPDF_AVAILABLE = True
+except ImportError:
+    FPDF_AVAILABLE = False
+    st.warning("PDF generation requires fpdf. Install with: pip install fpdf2")
+
+# Configuration
+API_URL = "http://localhost:5000"
+
+
+def fetch_energy_logs(mac_address, limit=1000):
+    """Fetch energy logs for a device"""
+    try:
+        response = requests.get(
+            f"{API_URL}/api/energy/logs/{mac_address}",
+            params={"limit": limit},
+            timeout=5
+        )
+        if response.status_code == 200:
+            return response.json().get("logs", [])
+        return []
+    except Exception as e:
+        st.error(f"Error fetching logs: {e}")
+        return []
+
+
+def calculate_energy_kwh(power_values, time_interval_seconds=5):
+    """Calculate energy in kWh"""
+    if not power_values:
+        return 0
+    total_power = sum(power_values)
+    energy_kwh = (total_power * time_interval_seconds) / 3600000
+    return energy_kwh
+
+
+def generate_txt_report(df, device_name, mac_address):
+    """Generate TXT report"""
+    buffer = io.StringIO()
+    
+    # Header
+    buffer.write("=" * 60 + "\n")
+    buffer.write("SMART ENERGY MONITORING SYSTEM - ENERGY REPORT\n")
+    buffer.write("=" * 60 + "\n\n")
+    
+    # Device Info
+    buffer.write(f"Device Name: {device_name}\n")
+    buffer.write(f"MAC Address: {mac_address}\n")
+    buffer.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    buffer.write("-" * 60 + "\n\n")
+    
+    # Summary
+    buffer.write("SUMMARY\n")
+    buffer.write("-" * 60 + "\n")
+    buffer.write(f"Total Readings: {len(df)}\n")
+    buffer.write(f"Total Energy: {calculate_energy_kwh(df['power'].tolist()):.4f} kWh\n")
+    buffer.write(f"Average Power: {df['power'].mean():.2f} W\n")
+    buffer.write(f"Max Power: {df['power'].max():.2f} W\n")
+    buffer.write(f"Min Power: {df['power'].min():.2f} W\n")
+    buffer.write(f"Average Voltage: {df['voltage'].mean():.2f} V\n")
+    buffer.write(f"Average Current: {df['current'].mean():.2f} A\n")
+    buffer.write("\n" + "-" * 60 + "\n\n")
+    
+    # Data
+    buffer.write("SENSOR DATA\n")
+    buffer.write("-" * 60 + "\n")
+    buffer.write(f"{'Timestamp':<25} {'Voltage(V)':<12} {'Current(A)':<12} {'Power(W)':<12}\n")
+    buffer.write("-" * 60 + "\n")
+    
+    for _, row in df.iterrows():
+        buffer.write(f"{str(row['timestamp']):<25} {row['voltage']:<12.2f} {row['current']:<12.2f} {row['power']:<12.2f}\n")
+    
+    buffer.write("\n" + "=" * 60 + "\n")
+    buffer.write("END OF REPORT\n")
+    
+    return buffer.getvalue()
+
+
+def generate_csv_report(df):
+    """Generate CSV report"""
+    buffer = io.StringIO()
+    df.to_csv(buffer, index=False)
+    return buffer.getvalue()
+
+
+def generate_pdf_report(df, device_name, mac_address):
+    """Generate PDF report"""
+    if not FPDF_AVAILABLE:
+        return None
+    
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Smart Energy Monitoring - Energy Report", ln=True, align="C")
+    pdf.ln(5)
+    
+    # Device Info
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, f"Device: {device_name}", ln=True)
+    pdf.cell(0, 10, f"MAC Address: {mac_address}", ln=True)
+    pdf.cell(0, 10, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True)
+    pdf.ln(5)
+    
+    # Summary
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, "Summary", ln=True)
+    pdf.set_font("Arial", "", 11)
+    
+    total_energy = calculate_energy_kwh(df['power'].tolist())
+    
+    pdf.cell(0, 8, f"Total Readings: {len(df)}", ln=True)
+    pdf.cell(0, 8, f"Total Energy: {total_energy:.4f} kWh", ln=True)
+    pdf.cell(0, 8, f"Average Power: {df['power'].mean():.2f} W", ln=True)
+    pdf.cell(0, 8, f"Max Power: {df['power'].max():.2f} W", ln=True)
+    pdf.cell(0, 8, f"Min Power: {df['power'].min():.2f} W", ln=True)
+    pdf.cell(0, 8, f"Average Voltage: {df['voltage'].mean():.2f} V", ln=True)
+    pdf.cell(0, 8, f"Average Current: {df['current'].mean():.2f} A", ln=True)
+    pdf.ln(5)
+    
+    # Recent Data Table
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, "Recent Readings (Last 20)", ln=True)
+    pdf.set_font("Arial", "", 8)
+    
+    # Table header
+    pdf.cell(50, 8, "Timestamp", 1)
+    pdf.cell(30, 8, "Voltage (V)", 1)
+    pdf.cell(30, 8, "Current (A)", 1)
+    pdf.cell(30, 8, "Power (W)", 1)
+    pdf.ln()
+    
+    # Table data (last 20 rows)
+    for _, row in df.tail(20).iterrows():
+        pdf.cell(50, 8, str(row['timestamp'])[:19], 1)
+        pdf.cell(30, 8, f"{row['voltage']:.2f}", 1)
+        pdf.cell(30, 8, f"{row['current']:.2f}", 1)
+        pdf.cell(30, 8, f"{row['power']:.2f}", 1)
+        pdf.ln()
+    
+    # Footer
+    pdf.set_y(-20)
+    pdf.set_font("Arial", "I", 8)
+    pdf.cell(0, 10, "Generated by Smart Energy Monitoring System", ln=True, align="C")
+    
+    return pdf.output(dest='S').encode('latin-1', 'replace')
+
+
+def main():
+    """Main reports page"""
+    
+    st.title("📄 Energy Reports")
+    st.markdown("---")
+    
+    # Device selector
+    st.sidebar.header("Select Device")
+    
+    try:
+        response = requests.get(f"{API_URL}/api/device/list", timeout=5)
+        if response.status_code == 200:
+            devices = response.json().get("devices", [])
+        else:
+            devices = []
+    except:
+        devices = []
+    
+    if not devices:
+        st.warning("No devices found. Please register a device first.")
+        return
+    
+    device_options = {d["device_name"]: d["mac_address"] for d in devices}
+    selected_device = st.sidebar.selectbox(
+        "Select Device",
+        options=list(device_options.keys())
+    )
+    mac_address = device_options[selected_device]
+    
+    # Number of readings
+    num_readings = st.sidebar.slider("Number of readings", 50, 1000, 100)
+    
+    # Fetch data
+    logs = fetch_energy_logs(mac_address, limit=num_readings)
+    
+    if not logs:
+        st.warning("No energy data available. Start the sensor simulator first.")
+        return
+    
+    # Convert to DataFrame
+    df = pd.DataFrame(logs)
+    df = df.iloc[::-1]
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    
+    # Calculate summary
+    total_energy = calculate_energy_kwh(df['power'].tolist())
+    peak_power = df['power'].max()
+    peak_time = df.loc[df['power'].idxmax(), 'timestamp']
+    
+    # Display summary
+    st.header("📊 Report Summary")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Readings", len(df))
+    
+    with col2:
+        st.metric("Total Energy", f"{total_energy:.4f} kWh")
+    
+    with col3:
+        st.metric("Peak Power", f"{peak_power:.2f} W")
+    
+    with col4:
+        st.metric("Peak Time", peak_time.strftime("%H:%M:%S"))
+    
+    st.markdown("---")
+    
+    # Export section
+    st.header("📥 Export Reports")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    # TXT Export
+    with col1:
+        st.subheader("TXT Report")
+        txt_content = generate_txt_report(df, selected_device, mac_address)
+        st.download_button(
+            label="📥 Download TXT",
+            data=txt_content,
+            file_name=f"energy_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            mime="text/plain"
+        )
+        st.caption("Plain text format with all data")
+    
+    # CSV Export
+    with col2:
+        st.subheader("CSV Report")
+        csv_content = generate_csv_report(df)
+        st.download_button(
+            label="📥 Download CSV",
+            data=csv_content,
+            file_name=f"energy_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv"
+        )
+        st.caption("Excel-compatible format")
+    
+    # PDF Export
+    with col3:
+        st.subheader("PDF Report")
+        if FPDF_AVAILABLE:
+            pdf_content = generate_pdf_report(df, selected_device, mac_address)
+            if pdf_content:
+                st.download_button(
+                    label="📥 Download PDF",
+                    data=pdf_content,
+                    file_name=f"energy_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf"
+                )
+                st.caption("Formatted PDF with graphs")
+        else:
+            st.warning("PDF not available")
+            st.info("Install: pip install fpdf2")
+    
+    # Preview section
+    st.markdown("---")
+    st.header("👀 Data Preview")
+    
+    st.dataframe(df.head(20), use_container_width=True)
+    
+    # Footer
+    st.markdown("---")
+    st.caption(f"Report generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+if __name__ == "__main__":
+    main()

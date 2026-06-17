@@ -1,7 +1,12 @@
 venv/
 __pycache__/
 *.pyc
+venv/
+__pycache__/
+*.pyc
+*.db
+.venv/
+.env
 energy.db
 *.sqlite3
-.env
 project_structure.txt
